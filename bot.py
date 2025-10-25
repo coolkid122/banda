@@ -4,7 +4,6 @@ import asyncio
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 import re
-from datetime import datetime
 
 app = FastAPI()
 
@@ -19,13 +18,13 @@ async def lifespan(app):
 
 app.lifespan = lifespan
 
-@app.get("/job")
+@app.get("/pets")
 async def get_job_id():
-    return {"job_ids": {"jobid": latest_job_id}} if latest_job_id else {"job_ids": {"jobid": "No job ID available"}}
+    return {"job_ids": latest_job_id} if latest_job_id else {"job_ids": "No job ID available"}
 
 async def monitor_channels(token, channel_ids):
     global latest_job_id
-    headers = {'Authorization': token, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'Authorization': token, 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
     async with aiohttp.ClientSession() as session:
         last_message_ids = {channel_id: None for channel_id in channel_ids}
         while True:
@@ -46,7 +45,7 @@ async def monitor_channels(token, channel_ids):
                                 print(f"New job ID from {channel_id}: {job_id}")
                 except Exception as e:
                     print(f"Error monitoring {channel_id}: {str(e)}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     import uvicorn
