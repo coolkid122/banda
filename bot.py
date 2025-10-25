@@ -4,19 +4,28 @@ import json
 import os
 from aiohttp import web
 
-current_job_id = "No job ID available"
+job_ids_10m = "No job ID available"
+job_ids_100m = "No job ID available"
 
 async def process_message(message):
-    global current_job_id
+    global job_ids_10m, job_ids_100m
     if 'embeds' in message and message['embeds']:
         for embed in message['embeds']:
             if 'fields' in embed and embed['fields']:
-                jobId = None
+                job_id, money_per_sec = None, 0
                 for field in embed['fields']:
+                    fval = field.get('value', '')
                     if 'Job ID' in field.get('name', ''):
-                        jobId = field.get('value', '').replace('`', '')
-                if jobId:
-                    current_job_id = jobId
+                        job_id = fval.replace('`', '')
+                    if '$' in fval and 'M/s' in fval:
+                        dollar = fval.split('$')[1].split('M/s')[0]
+                        if dollar:
+                            money_per_sec = float(dollar) * 1000000
+                if job_id and money_per_sec >= 10000000:
+                    if money_per_sec >= 100000000:
+                        job_ids_100m = job_id
+                    else:
+                        job_ids_10m = job_id
 
 async def monitor_discord_channel(token, channel_id):
     headers = {
@@ -45,7 +54,7 @@ async def monitor_discord_channel(token, channel_id):
                             last_message_id = message['id']
 
 async def handle(request):
-    return web.json_response({"job_ids": current_job_id})
+    return web.json_response({"job_ids10m": job_ids_10m, "job_ids100m": job_ids_100m})
 
 async def main():
     TOKEN = os.environ['TOKEN']
