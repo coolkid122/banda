@@ -30,19 +30,25 @@ async def monitor_channels(token, channel_ids):
         while True:
             for channel_id in channel_ids:
                 try:
-                    url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=1"
+                    url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=5"
                     async with session.get(url, headers=headers) as response:
+                        print(f"Channel {channel_id} status: {response.status}")
                         if response.status != 200:
+                            print(f"Failed to fetch from {channel_id}: {await response.text()}")
                             continue
                         messages = await response.json()
-                        if messages:
-                            message = messages[0]
+                        print(f"Fetched {len(messages)} messages from {channel_id}")
+                        for message in messages:
                             content = message.get('content', '')
+                            print(f"Message content from {channel_id}: {repr(content)}")
                             match = re.search(r'[a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12}', content, re.IGNORECASE)
                             if match:
                                 job_id = match.group(0)
                                 latest_job_id = job_id
-                                print(f"New job ID from {channel_id}: {job_id}")
+                                print(f"Job ID matched from {channel_id}: {job_id}")
+                            else:
+                                print(f"No job ID matched in message from {channel_id}")
+                            last_message_ids[channel_id] = message['id']
                 except Exception as e:
                     print(f"Error monitoring {channel_id}: {str(e)}")
             await asyncio.sleep(0.1)
