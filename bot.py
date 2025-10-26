@@ -1,71 +1,86 @@
-import asyncio
 import aiohttp
-import json
 import os
-from aiohttp import web
-
-job_ids_10m = "No job ID available"
-job_ids_100m = "No job ID available"
-
-async def process_message(message):
-    global job_ids_10m, job_ids_100m
-    if 'embeds' in message and message['embeds']:
-        for embed in message['embeds']:
-            if 'fields' in embed and embed['fields']:
-                job_id, money_per_sec = None, 0
-                for field in embed['fields']:
-                    fval = field.get('value', '')
-                    if 'Job ID' in field.get('name', ''):
-                        job_id = fval.replace('`', '')
-                    if '$' in fval and 'M/s' in fval:
-                        dollar = fval.split('$')[1].split('M/s')[0]
-                        if dollar:
-                            money_per_sec = float(dollar) * 1000000
-                if job_id and money_per_sec >= 10000000:
-                    if money_per_sec >= 100000000:
-                        job_ids_100m = job_id
-                    else:
-                        job_ids_10m = job_id
-
-async def monitor_discord_channel(token, channel_id):
-    headers = {
-        'Authorization': token,
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+import asyncio
+import uuid
+from flask import Flask, request, jsonify
+import threading
+from dotenv import load_dotenv
+load_dotenv()
+TOKEN=os.environ.get("TOKEN")
+PORT=int(os.environ.get("PORT",8080))
+CHANNEL_10M=1430459323716337795
+CHANNEL_100M=1430459403034955786
+PHRASES=["Chipso and Queso","Los Primos","Eviledon","Los Tacoritas","Tang Tang Keletang","Ketupat Kepat","Tictac Sahur","La Supreme Combinasion","Ketchuru and Musturu","Garama and Madundung","Spaghetti Tualetti","Spooky and Pumpky","La Casa Boo","La Secret Combinasion","Burguro And Fryuro","Headless Horseman","Dragon Cannelloni","Meowl","Strawberry Elephant"]
+job_ids={"job_ids10m":"No job ID available","job_ids100m":"No job ID available","job_idsrare":"No job ID available"}
+app=Flask(__name__)
+@app.route("/pets",methods=["GET"])
+async def pets():
+    user_agent=request.headers.get("User-Agent")
+    if not user_agent or "Roblox/WinInet" not in user_agent:
+        return jsonify({"error":"access denied"}),403
+    return jsonify(job_ids)
+async def make_request(session,url,headers,max_retries=5):
+    retries=0
+    base_delay=5
+    while retries<max_retries:
+        try:
+            async with session.get(url,headers=headers) as response:
+                if response.status==429:
+                    retry_after=float(response.headers.get("Retry-After",base_delay))
+                    await asyncio.sleep(retry_after)
+                    retries+=1
+                    base_delay*=2
+                    continue
+                elif response.status!=200:
+                    return None
+                return await response.json()
+        except:
+            retries+=1
+            await asyncio.sleep(base_delay)
+            base_delay*=2
+    return None
+async def monitor_discord_channels():
+    global job_ids
+    headers={'Authorization':TOKEN,'Content-Type':'application/json','User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     async with aiohttp.ClientSession() as session:
-        url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=1"
-        async with session.get(url, headers=headers) as response:
-            if response.status == 200:
-                messages = await response.json()
-                if messages:
-                    await process_message(messages[0])
-                    last_message_id = messages[0]['id']
-                else:
-                    last_message_id = None
+        last_message_ids={str(CHANNEL_10M):None,str(CHANNEL_100M):None}
+        for cid in [CHANNEL_10M,CHANNEL_100M]:
+            url=f"https://discord.com/api/v9/channels/{cid}/messages?limit=1"
+            messages=await make_request(session,url,headers)
+            if messages is None:
+                return
+            last_message_ids[str(cid)]=messages[0]['id'] if messages else None
         while True:
-            if last_message_id:
-                url = f"https://discord.com/api/v9/channels/{channel_id}/messages?after={last_message_id}&limit=10"
-                async with session.get(url, headers=headers) as response:
-                    if response.status == 200:
-                        messages = await response.json()
+            for cid in [CHANNEL_10M,CHANNEL_100M]:
+                try:
+                    url=f"https://discord.com/api/v9/channels/{cid}/messages?after={last_message_ids[str(cid)]}&limit=10"
+                    messages=await make_request(session,url,headers)
+                    if messages:
                         for message in reversed(messages):
-                            await process_message(message)
-                            last_message_id = message['id']
-
-async def handle(request):
-    return web.json_response({"job_ids10m": job_ids_10m, "job_ids100m": job_ids_100m})
-
+                            for phrase in PHRASES:
+                                if phrase.lower() in message['content'].lower():
+                                    phrase_clean=phrase.replace(" ","_").replace("&","and")
+                                    job_id=str(uuid.uuid5(uuid.NAMESPACE_DNS,f"{phrase_clean}_{message['id']}"))
+                                    if cid==CHANNEL_10M:
+                                        job_ids["job_ids10m"]=job_id
+                                    elif cid==CHANNEL_100M:
+                                        job_ids["job_ids100m"]=job_id
+                                    job_ids["job_idsrare"]=job_id
+                                    break
+                            last_message_ids[str(cid)]=message['id']
+                    await asyncio.sleep(5)
+                except:
+                    await asyncio.sleep(5)
+def run_flask():
+    app.run(host="0.0.0.0",port=PORT)
 async def main():
-    TOKEN = os.environ['TOKEN']
-    PORT = 8080
-    channels = [1430459323716337795, 1430459403034955786]
-    tasks = []
-    for channel_id in channels:
-        tasks.append(asyncio.create_task(monitor_discord_channel(TOKEN, channel_id)))
-    app = web.Application()
-    app.add_routes([web.get('/pets', handle)])
-    await web._run_app(app, port=PORT, print=False, access_log=False)
-
-if __name__ == "__main__":
+    if not TOKEN:
+        return
+    flask_thread=threading.Thread(target=run_flask)
+    flask_thread.start()
+    try:
+        await monitor_discord_channels()
+    except:
+        pass
+if __name__=="__main__":
     asyncio.run(main())
