@@ -1,7 +1,6 @@
 import aiohttp
 import asyncio
 import os
-import uuid
 import logging
 from fastapi import FastAPI
 import uvicorn
@@ -82,52 +81,41 @@ async def monitor_discord_channels():
 
         while True:
             for cid in [CHANNEL_10M, CHANNEL_100M]:
-                after_id = last_message_ids[str(cid)]
-                url = f"https://discord.com/api/v9/channels/{cid}/messages?after={after_id}&limit=10" if after_id else f"https://discord.com/api/v9/channels/{cid}/messages?limit=10"
-                logger.info(f"Polling {cid}: after={after_id}")
-                messages = await make_request(session, url, headers)
-                if messages:
-                    logger.info(f"Got {len(messages)} messages for {cid}")
-                    for message in reversed(messages):
-                        job_id = None
-                        content = message.get('content', '').lower()
-                        logger.info(f"Checking message {message['id']}: '{content[:50]}...'")
-                        if 'embeds' in message and message['embeds']:
-                            for embed in message['embeds']:
-                                for field in embed.get('fields', []):
-                                    if 'Job ID' in field.get('name', ''):
-                                        job_id = field.get('value', '').replace('`', '')
-                                        logger.info(f"Found Job ID in embed: {job_id}")
-                                embed_text = (embed.get('title', '') + ' ' + embed.get('description', '')).lower()
-                                for field in embed.get('fields', []):
-                                    embed_text += ' ' + field.get('name', '') + ' ' + field.get('value', '')
-                                logger.info(f"Checking embed in {message['id']}: '{embed_text[:50]}...'")
-                                for phrase in PHRASES:
-                                    if phrase.lower() in embed_text:
-                                        phrase_clean = phrase.replace(" ", "_").replace("&", "and")
-                                        job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
-                                        logger.info(f"Match '{phrase}' in embed {cid}. Rare Job ID: {job_id}")
-                                        job_ids["job_idsrare"] = job_id
-                                        break
-                        if not job_id:
-                            job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"message_{message['id']}"))
-                            logger.info(f"No embed Job ID, generated: {job_id}")
-                        for phrase in PHRASES:
-                            if phrase.lower() in content:
-                                phrase_clean = phrase.replace(" ", "_").replace("&", "and")
-                                job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
-                                logger.info(f"Match '{phrase}' in {cid}. Rare Job ID: {job_id}")
-                                job_ids["job_idsrare"] = job_id
-                                break
-                        if cid == CHANNEL_10M:
-                            job_ids["job_ids10m"] = job_id
-                            logger.info(f"Updated job_ids10m: {job_id}")
-                        elif cid == CHANNEL_100M:
-                            job_ids["job_ids100m"] = job_id
-                            logger.info(f"Updated job_ids100m: {job_id}")
-                        last_message_ids[str(cid)] = message['id']
-                    logger.info(f"Updated job_ids: {job_ids}")
-                await asyncio.sleep(0.5)
+                try:
+                    after_id = last_message_ids[str(cid)]
+                    url = f"https://discord.com/api/v9/channels/{cid}/messages?after={after_id}&limit=10" if after_id else f"https://discord.com/api/v9/channels/{cid}/messages?limit=10"
+                    logger.info(f"Polling {cid}: after={after_id}")
+                    messages = await make_request(session, url, headers)
+                    if messages:
+                        logger.info(f"Got {len(messages)} messages for {cid}")
+                        for message in reversed(messages):
+                            jobId = None
+                            petName = None
+                            if 'embeds' in message and message['embeds']:
+                                for embed in message['embeds']:
+                                    if 'fields' in embed and embed['fields']:
+                                        for field in embed['fields']:
+                                            fval = field.get('value', '')
+                                            if 'Job ID' in field.get('name', ''):
+                                                jobId = fval.replace('`', '')
+                                            if 'Name' in field.get('name', ''):
+                                                petName = fval
+                            if jobId:
+                                logger.info(f"Extracted Job ID: {jobId}")
+                                if cid == CHANNEL_10M:
+                                    job_ids["job_ids10m"] = jobId
+                                    logger.info(f"Updated job_ids10m: {jobId}")
+                                elif cid == CHANNEL_100M:
+                                    job_ids["job_ids100m"] = jobId
+                                    logger.info(f"Updated job_ids100m: {jobId}")
+                                if petName and any(phrase.lower() in petName.lower() for phrase in PHRASES):
+                                    job_ids["job_idsrare"] = jobId
+                                    logger.info(f"Rare match for {petName}, updated job_idsrare: {jobId}")
+                            last_message_ids[str(cid)] = message['id']
+                        logger.info(f"Updated job_ids: {job_ids}")
+                except Exception as e:
+                    logger.error(f"Polling error for {cid}: {e}")
+            await asyncio.sleep(0.1)
 
 @app.get("/")
 async def home():
@@ -137,12 +125,12 @@ async def home():
 async def pets():
     return job_ids
 
-async def main():
+@app.on_event("startup")
+async def startup():
     if not TOKEN:
         logger.error("TOKEN not set")
         return
     asyncio.create_task(monitor_discord_channels())
 
 if __name__ == "__main__":
-    asyncio.run(main())
     uvicorn.run(app, host="0.0.0.0", port=PORT)
