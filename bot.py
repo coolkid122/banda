@@ -4,10 +4,10 @@ import asyncio
 import uuid
 from flask import Flask, jsonify
 import threading
-from dotenv import load_dotenv
 
-load_dotenv()
+app = Flask(__name__)
 
+# Environment variables from Railway
 TOKEN = os.environ.get("TOKEN")
 PORT = int(os.environ.get("PORT", 8080))
 CHANNEL_10M = 1430459323716337795
@@ -24,8 +24,6 @@ job_ids = {
     "job_ids100m": "No job ID available",
     "job_idsrare": "No job ID available"
 }
-
-app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -59,7 +57,7 @@ async def make_request(session, url, headers, max_retries=5):
 async def monitor_discord_channels():
     global job_ids
     headers = {
-        'Authorization': TOKEN,
+        'Authorization': TOKEN,  # User token, no 'Bot' prefix
         'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
