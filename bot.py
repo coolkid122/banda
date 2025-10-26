@@ -89,22 +89,32 @@ async def monitor_discord_channels():
                 if messages:
                     logger.info(f"Got {len(messages)} messages for {cid}")
                     for message in reversed(messages):
-                        content_lower = message['content'].lower()
-                        logger.info(f"Checking message {message['id']}: '{content_lower[:50]}...'")
+                        content = message.get('content', '').lower()
+                        logger.info(f"Checking message {message['id']}: '{content[:50]}...'")
                         for phrase in PHRASES:
-                            if phrase.lower() in content_lower:
+                            if phrase.lower() in content:
                                 phrase_clean = phrase.replace(" ", "_").replace("&", "and")
                                 job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
                                 logger.info(f"Match '{phrase}' in {cid}. Job ID: {job_id}")
-                                if cid == CHANNEL_10M:
-                                    job_ids["job_ids10m"] = job_id
-                                elif cid == CHANNEL_100M:
-                                    job_ids["job_ids100m"] = job_id
                                 job_ids["job_idsrare"] = job_id
                                 logger.info(f"Updated job_ids: {job_ids}")
                                 break
+                        if 'embeds' in message and message['embeds']:
+                            for embed in message['embeds']:
+                                embed_text = (embed.get('title', '') + ' ' + embed.get('description', '')).lower()
+                                for field in embed.get('fields', []):
+                                    embed_text += ' ' + field.get('name', '') + ' ' + field.get('value', '')
+                                logger.info(f"Checking embed in {message['id']}: '{embed_text[:50]}...'")
+                                for phrase in PHRASES:
+                                    if phrase.lower() in embed_text:
+                                        phrase_clean = phrase.replace(" ", "_").replace("&", "and")
+                                        job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
+                                        logger.info(f"Match '{phrase}' in embed {cid}. Job ID: {job_id}")
+                                        job_ids["job_idsrare"] = job_id
+                                        logger.info(f"Updated job_ids: {job_ids}")
+                                        break
                         last_message_ids[str(cid)] = message['id']
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
 
 @app.get("/")
 async def home():
