@@ -1,13 +1,16 @@
 import aiohttp
-import os
 import asyncio
+import os
 import uuid
-from flask import Flask, jsonify
-import threading
+import logging
+from fastapi import FastAPI
+import uvicorn
 
-app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Environment variables from Railway
+app = FastAPI()
+
 TOKEN = os.environ.get("TOKEN")
 PORT = int(os.environ.get("PORT", 8080))
 CHANNEL_10M = 1430459323716337795
@@ -25,88 +28,98 @@ job_ids = {
     "job_idsrare": "No job ID available"
 }
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify(job_ids)
-
-@app.route("/pets", methods=["GET"])
-def pets():
-    return jsonify(job_ids)
-
 async def make_request(session, url, headers, max_retries=5):
     retries = 0
     base_delay = 5
     while retries < max_retries:
         try:
             async with session.get(url, headers=headers) as response:
-                if response.status == 429:
+                status = response.status
+                text = await response.text()
+                logger.info(f"API Request to {url}: Status {status}, Response: {text[:200]}...")
+                if status == 429:
                     retry_after = float(response.headers.get("Retry-After", base_delay))
+                    logger.warning(f"Rate limited. Waiting {retry_after}s (retry {retries + 1}/{max_retries})")
                     await asyncio.sleep(retry_after)
                     retries += 1
                     base_delay *= 2
                     continue
-                elif response.status != 200:
+                elif status != 200:
+                    logger.error(f"API Error {status}: {text}")
                     return None
-                return await response.json()
-        except Exception:
+                try:
+                    return await response.json()
+                except Exception as e:
+                    logger.error(f"JSON decode error: {e}, Response: {text}")
+                    return None
+        except Exception as e:
+            logger.error(f"Request exception: {e}")
             retries += 1
             await asyncio.sleep(base_delay)
             base_delay *= 2
+    logger.error(f"Max retries exceeded for {url}")
     return None
 
 async def monitor_discord_channels():
     global job_ids
     headers = {
-        'Authorization': TOKEN,  # User token, no 'Bot' prefix
+        'Authorization': TOKEN,
         'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
+    logger.info("Starting Discord channel monitor...")
     async with aiohttp.ClientSession() as session:
         last_message_ids = {str(CHANNEL_10M): None, str(CHANNEL_100M): None}
         for cid in [CHANNEL_10M, CHANNEL_100M]:
             url = f"https://discord.com/api/v9/channels/{cid}/messages?limit=1"
+            logger.info(f"Initial fetch for channel {cid}: {url}")
             messages = await make_request(session, url, headers)
-            if messages is None:
-                continue
-            last_message_ids[str(cid)] = messages[0]['id'] if messages else None
+            if messages:
+                last_message_ids[str(cid)] = messages[0]['id']
+                logger.info(f"Initial last ID for {cid}: {last_message_ids[str(cid)]}")
+            else:
+                logger.warning(f"Failed initial fetch for {cid}")
 
         while True:
             for cid in [CHANNEL_10M, CHANNEL_100M]:
-                try:
-                    url = f"https://discord.com/api/v9/channels/{cid}/messages?after={last_message_ids[str(cid)]}&limit=10"
-                    messages = await make_request(session, url, headers)
-                    if messages:
-                        for message in reversed(messages):
-                            for phrase in PHRASES:
-                                if phrase.lower() in message['content'].lower():
-                                    phrase_clean = phrase.replace(" ", "_").replace("&", "and")
-                                    job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
-                                    # Update channel-specific job ID
-                                    if cid == CHANNEL_10M:
-                                        job_ids["job_ids10m"] = job_id
-                                    elif cid == CHANNEL_100M:
-                                        job_ids["job_ids100m"] = job_id
-                                    # Update job_idsrare for any matching phrase in either channel
-                                    job_ids["job_idsrare"] = job_id
-                                    break
-                            last_message_ids[str(cid)] = message['id']
-                    await asyncio.sleep(5)
-                except Exception:
-                    await asyncio.sleep(5)
+                after_id = last_message_ids[str(cid)]
+                url = f"https://discord.com/api/v9/channels/{cid}/messages?after={after_id}&limit=10" if after_id else f"https://discord.com/api/v9/channels/{cid}/messages?limit=10"
+                logger.info(f"Polling {cid}: after={after_id}")
+                messages = await make_request(session, url, headers)
+                if messages:
+                    logger.info(f"Got {len(messages)} messages for {cid}")
+                    for message in reversed(messages):
+                        content_lower = message['content'].lower()
+                        logger.info(f"Checking message {message['id']}: '{content_lower[:50]}...'")
+                        for phrase in PHRASES:
+                            if phrase.lower() in content_lower:
+                                phrase_clean = phrase.replace(" ", "_").replace("&", "and")
+                                job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{phrase_clean}_{message['id']}"))
+                                logger.info(f"Match '{phrase}' in {cid}. Job ID: {job_id}")
+                                if cid == CHANNEL_10M:
+                                    job_ids["job_ids10m"] = job_id
+                                elif cid == CHANNEL_100M:
+                                    job_ids["job_ids100m"] = job_id
+                                job_ids["job_idsrare"] = job_id
+                                logger.info(f"Updated job_ids: {job_ids}")
+                                break
+                        last_message_ids[str(cid)] = message['id']
+                await asyncio.sleep(1)
 
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT)
+@app.get("/")
+async def home():
+    return job_ids
+
+@app.get("/pets")
+async def pets():
+    return job_ids
 
 async def main():
     if not TOKEN:
-        print("Error: TOKEN environment variable not set.")
+        logger.error("TOKEN not set")
         return
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.start()
-    try:
-        await monitor_discord_channels()
-    except Exception as e:
-        print(f"Error in monitor_discord_channels: {e}")
+    asyncio.create_task(monitor_discord_channels())
 
 if __name__ == "__main__":
     asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
