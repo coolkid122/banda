@@ -11,7 +11,7 @@ load_dotenv()
 TOKEN = os.environ.get("TOKEN")
 PORT = int(os.environ.get("PORT", 8080))
 
-CHANNEL_ID = 1423730052872536094
+CHANNEL_ID = 1434273151528734840
 
 PHRASES = [
     "Chipso and Queso","Los Primos","Eviledon","Los Tacoritas","Tang Tang Keletang",
