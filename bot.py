@@ -33,10 +33,6 @@ app = Flask(__name__)
 async def pets():
     return jsonify(job_ids)
 
-@app.route("/", methods=["GET"])
-async def root():
-    return jsonify(job_ids)
-
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 def extract_job_id(msg):
