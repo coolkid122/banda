@@ -2,7 +2,7 @@ import aiohttp
 import os
 import asyncio
 import re
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
 import threading
 from dotenv import load_dotenv
 
